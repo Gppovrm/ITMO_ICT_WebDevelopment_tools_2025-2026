@@ -876,244 +876,128 @@
 предназначен главным образом для I/O-операций и не подходит для интенсивных вычислительных задач.</p>
 <p>Следовательно, для задач, связанных с большими объёмами вычислений, рекомендуется использовать <strong>multiprocessing</strong>, а
 <code>threading</code> и <code>asyncio</code> применять преимущественно для работы с сетью, файлами и базами данных.</p>
-<h2 id="2-">Задача 2: Параллельный парсинг веб-страниц с сохранением в базу данных</h2>
+<h2 id="2-">Задача 2. Параллельный парсинг веб-страниц с сохранением в базу данных</h2>
 <hr />
-<h2 id="1">1. Введение</h2>
-<p>Вторая часть лабораторной работы направлена на изучение эффективности подходов <code>threading</code>, <code>multiprocessing</code> и
-<code>asyncio</code> в задачах, связанных с вводом-выводом (I/O-bound). При выполнении сетевых HTTP-запросов процессор большую
-часть времени простаивает в ожидании ответа от удаленных узлов, что позволяет эффективно использовать конкурентные
-подходы.</p>
-<p>В рамках задания требовалось разработать три программы для параллельного парсинга веб-страниц, сохраняющих информацию в
-базу данных из лабораторной работы №1. Каждая программа использует один из подходов: <code>threading</code>, <code>multiprocessing</code> или
-<code>asyncio</code>.</p>
+<h3 id="_10">Условие задачи</h3>
+<p>Напишите три программы на Python, использующие подходы <code>threading</code>, <code>multiprocessing</code> и <code>async</code>, для параллельного
+парсинга веб-страниц с сохранением данных в базу данных из лабораторной работы №1.</p>
 <hr />
-<h2 id="2">2. Архитектура и программная реализация</h2>
-<h3 id="_10">Структура проекта</h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>lab2/task2/
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>├── db.py                     # Работа с базой данных
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>├── parser_utils.py           # Парсинг и вспомогательные функции
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>├── threading_parse.py        # Многопоточная версия
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>├── multiprocessing_parse.py  # Многопроцессная версия
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>├── async_parse.py            # Асинхронная версия
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>├── runner.py                 # Оркестратор с замерами времени
-</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>├── urls.txt                  # Список URL для парсинга
-</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>├── config.py                 # Настройки (User-Agent)
-</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>└── requirements.txt          # Зависимости
-</span></code></pre></div>
-<h3 id="_11">Модель базы данных</h3>
-<p>Для хранения результатов парсинга создана таблица <code>parsed_books</code>:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">ParsedBook</span><span class="p">(</span><span class="n">SQLModel</span><span class="p">,</span> <span class="n">table</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="n">__tablename__</span> <span class="o">=</span> <span class="s2">&quot;parsed_books&quot;</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="nb">id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">primary_key</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="n">url</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">index</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span>
-</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="n">author</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="s2">&quot;Unknown&quot;</span><span class="p">)</span>
-</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="n">parsed_at</span><span class="p">:</span> <span class="n">datetime</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">utcnow</span><span class="p">)</span>
-</span></code></pre></div>
-<h3 id="21">2.1. Механизм парсинга</h3>
-<p>Функция <code>parse_page()</code> извлекает название книги и автора из HTML-страницы:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">parse_page</span><span class="p">(</span><span class="n">url</span><span class="p">):</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="n">HEADERS</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">15</span><span class="p">)</span>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="n">soup</span> <span class="o">=</span> <span class="n">BeautifulSoup</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="p">,</span> <span class="s1">&#39;html.parser&#39;</span><span class="p">)</span>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="n">title</span> <span class="o">=</span> <span class="n">soup</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;h1&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">get_text</span><span class="p">(</span><span class="n">strip</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="k">if</span> <span class="n">soup</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;h1&#39;</span><span class="p">)</span> <span class="k">else</span> <span class="s2">&quot;Unknown title&quot;</span>
-</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>
-</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>    <span class="n">author</span> <span class="o">=</span> <span class="s2">&quot;Unknown author&quot;</span>
-</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>    <span class="n">bibrec</span> <span class="o">=</span> <span class="n">soup</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;table&#39;</span><span class="p">,</span> <span class="n">class_</span><span class="o">=</span><span class="s1">&#39;bibrec&#39;</span><span class="p">)</span>
-</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>    <span class="k">if</span> <span class="n">bibrec</span><span class="p">:</span>
-</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>        <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">bibrec</span><span class="o">.</span><span class="n">find_all</span><span class="p">(</span><span class="s1">&#39;tr&#39;</span><span class="p">):</span>
-</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>            <span class="n">th</span> <span class="o">=</span> <span class="n">row</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;th&#39;</span><span class="p">)</span>
-</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>            <span class="k">if</span> <span class="n">th</span> <span class="ow">and</span> <span class="s1">&#39;Author&#39;</span> <span class="ow">in</span> <span class="n">th</span><span class="o">.</span><span class="n">get_text</span><span class="p">():</span>
-</span><span id="__span-10-13"><a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>                <span class="n">author</span> <span class="o">=</span> <span class="n">row</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s1">&#39;td&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">get_text</span><span class="p">(</span><span class="n">strip</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-10-14"><a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>                <span class="k">break</span>
-</span><span id="__span-10-15"><a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a>
-</span><span id="__span-10-16"><a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a>    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;url&quot;</span><span class="p">:</span> <span class="n">url</span><span class="p">,</span> <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="n">title</span><span class="p">,</span> <span class="s2">&quot;author&quot;</span><span class="p">:</span> <span class="n">author</span><span class="p">}</span>
-</span></code></pre></div>
-<h3 id="22">2.2. Особенности подходов</h3>
-<h4 id="threading_parsepy">Многопоточность (<code>threading_parse.py</code>)</h4>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">run_threading</span><span class="p">(</span><span class="n">num_threads</span><span class="o">=</span><span class="mi">8</span><span class="p">):</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    <span class="n">urls</span> <span class="o">=</span> <span class="n">load_urls</span><span class="p">()</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">chunks</span> <span class="o">=</span> <span class="n">divide_into_chunks</span><span class="p">(</span><span class="n">urls</span><span class="p">,</span> <span class="n">num_threads</span><span class="p">)</span>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">chunks</span><span class="p">:</span>
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>        <span class="n">t</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">worker</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="n">chunk</span><span class="p">,))</span>
-</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>        <span class="n">threads</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
-</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>        <span class="n">t</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
-</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>
-</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>    <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">threads</span><span class="p">:</span>
-</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>        <span class="n">t</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
-</span></code></pre></div>
-<p><strong>Особенность:</strong> При выполнении блокирующего HTTP-запроса поток освобождает GIL, позволяя другим потокам выполняться.
-Это обеспечивает конкурентность в рамках одного процесса.</p>
-<h4 id="multiprocessing_parsepy">Многопроцессность (<code>multiprocessing_parse.py</code>)</h4>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">run_multiprocessing</span><span class="p">(</span><span class="n">num_processes</span><span class="o">=</span><span class="mi">8</span><span class="p">):</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>    <span class="n">urls</span> <span class="o">=</span> <span class="n">load_urls</span><span class="p">()</span>
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>    <span class="n">chunks</span> <span class="o">=</span> <span class="n">divide_into_chunks</span><span class="p">(</span><span class="n">urls</span><span class="p">,</span> <span class="n">num_processes</span><span class="p">)</span>
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">chunks</span><span class="p">:</span>
-</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>        <span class="n">p</span> <span class="o">=</span> <span class="n">multiprocessing</span><span class="o">.</span><span class="n">Process</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">worker</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="n">chunk</span><span class="p">,))</span>
-</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>        <span class="n">processes</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
-</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>        <span class="n">p</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
-</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>
-</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>    <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">processes</span><span class="p">:</span>
-</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>        <span class="n">p</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
-</span></code></pre></div>
-<p><strong>Особенность:</strong> Каждый процесс имеет собственный интерпретатор Python и свой GIL, что позволяет обойти ограничения GIL.
-Однако создание процессов требует больше ресурсов.</p>
-<h4 id="async_parsepy">Асинхронность (<code>async_parse.py</code>)</h4>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">run_async_logic</span><span class="p">():</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>    <span class="n">urls</span> <span class="o">=</span> <span class="n">load_urls</span><span class="p">()</span>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="n">connector</span> <span class="o">=</span> <span class="n">aiohttp</span><span class="o">.</span><span class="n">TCPConnector</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>    <span class="k">async</span> <span class="k">with</span> <span class="n">aiohttp</span><span class="o">.</span><span class="n">ClientSession</span><span class="p">(</span><span class="n">connector</span><span class="o">=</span><span class="n">connector</span><span class="p">)</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
-</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>        <span class="n">tasks</span> <span class="o">=</span> <span class="p">[</span><span class="n">parse_page_async</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">url</span><span class="p">)</span> <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">]</span>
-</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>        <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="n">tasks</span><span class="p">)</span>
-</span></code></pre></div>
-<p><strong>Особенность:</strong> Все запросы выполняются в одном потоке. При ожидании ответа от сервера управление передаётся другим
-задачам. Нет накладных расходов на создание потоков или процессов.</p>
+<h3 id="_11">Выполнение задания</h3>
+<h4 id="1-url-">Шаг 1. Подготовка списка URL-адресов</h4>
+<p>Для парсинга были выбраны страницы книг с сайта Project Gutenberg — библиотеки бесплатных электронных книг.
+Было собрано около 100 URL-адресов формата <code>https://www.gutenberg.org/ebooks/XXXX</code>. Список URL сохраняется
+в файле <code>urls.txt</code>.</p>
+<p>Функция <code>divide_into_chunks()</code> (в файле <code>parser_utils.py</code>) разбивает общий список URL на равные части для
+распределения между потоками, процессами или асинхронными задачами.</p>
 <hr />
-<h2 id="3">3. Результаты профилирования</h2>
-<h3 id="_12">Условия тестирования</h3>
-<table>
-<thead>
-<tr>
-<th>Параметр</th>
-<th>Значение</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Количество URL</td>
-<td>60 (сайт Standard Ebooks)</td>
-</tr>
-<tr>
-<td>Количество воркеров</td>
-<td>8</td>
-</tr>
-<tr>
-<td>Тестовая машина</td>
-<td>Windows 11, Python 3.13</td>
-</tr>
-</tbody>
-</table>
-<h3 id="_13">Результаты замеров</h3>
+<h4 id="2-parse_and_save">Шаг 2. Функция parse_and_save</h4>
+<p>В файле <code>parser_utils.py</code> реализована функция <code>parse_gutenberg_book(url)</code>, которая выполняет следующие действия:</p>
+<ul>
+<li>Загружает HTML-страницу книги по указанному URL с помощью библиотеки <code>requests</code></li>
+<li>Парсит страницу с помощью <code>BeautifulSoup</code></li>
+<li>Извлекает название книги из тега <code>&lt;title&gt;</code> (очищая его от суффикса " by Author")</li>
+<li>Извлекает имя автора из таблицы <code>bibrec</code>, которая присутствует на каждой странице Gutenberg</li>
+<li>Извлекает числовой идентификатор книги из URL (последняя часть адреса)</li>
+<li>Возвращает словарь с ключами: <code>url</code>, <code>title</code>, <code>author</code>, <code>gutenberg_id</code></li>
+</ul>
+<p>Для асинхронной версии используется аналогичная функция <code>parse_page_async()</code>, работающая с <code>aiohttp</code>.</p>
+<p>Сохранение в базу данных выполняется через функцию <code>save_book_as_task()</code> в файле <code>db.py</code>. Она создаёт новую задачу
+в таблице <code>tasks</code> (из лабораторной работы №1) с параметрами:
+- <code>title</code> — "📖 Прочитать: {название книги}"
+- <code>description</code> — автор, ссылка и Gutenberg ID
+- <code>priority</code> — 3 (средний)
+- <code>status</code> — "pending"
+- <code>project_id</code> — ID проекта "Книги к прочтению"
+- <code>user_id</code> — ID текущего пользователя</p>
+<hr />
+<h4 id="3-threading">Шаг 3. Программа с использованием threading</h4>
+<p><strong>Файл:</strong> <code>threading_parse.py</code></p>
+<p>В этой программе создаётся 8 потоков (класс <code>threading.Thread</code>). Каждому потоку передаётся свой чанк URL-адресов.
+Потоки запускаются одновременно, главный поток ожидает их завершения через метод <code>join()</code>.</p>
+<p>При выполнении HTTP-запроса поток освобождает GIL, что позволяет другим потокам выполняться. Это даёт конкурентность
+в рамках одного процесса. После загрузки и парсинга каждая книга сохраняется в БД через вызов <code>save_book_as_task()</code>.</p>
+<hr />
+<h4 id="4-multiprocessing">Шаг 4. Программа с использованием multiprocessing</h4>
+<p><strong>Файл:</strong> <code>multiprocessing_parse.py</code></p>
+<p>В этой программе создаётся 8 независимых процессов (класс <code>multiprocessing.Process</code>). Каждый процесс получает свой
+чанк URL-адресов. Процессы запускаются одновременно, главный процесс ожидает их завершения через метод <code>join()</code>.</p>
+<p>Каждый процесс имеет собственный интерпретатор Python и собственный GIL, что позволяет обойти ограничения GIL.
+Однако создание процессов требует больше ресурсов, чем создание потоков. Это особенно заметно при большом количестве
+лёгких операций (как в случае с сетевыми запросами).</p>
+<hr />
+<h4 id="5-asyncawait-aiohttp">Шаг 5. Программа с использованием async/await и aiohttp</h4>
+<p><strong>Файл:</strong> <code>async_parse.py</code></p>
+<p>В этой программе используется асинхронный подход. Все запросы выполняются в одном потоке через цикл событий <code>asyncio</code>.
+Для HTTP-запросов используется библиотека <code>aiohttp</code>, которая поддерживает неблокирующие операции.</p>
+<p>Создаётся 8 асинхронных задач (через <code>asyncio.gather()</code>). При ожидании ответа от сервера (оператор <code>await</code>) управление
+передаётся другой задаче, что позволяет эффективно использовать один поток для множества одновременных запросов.
+Сохранение в БД происходит после получения результата каждой задачи.</p>
+<hr />
+<h4 id="6_1">Шаг 6. Запуск и замер времени</h4>
+<p><strong>Файл:</strong> <code>runner.py</code></p>
+<p>Скрипт-оркестратор последовательно запускает все три подхода. Перед каждым запуском база данных очищается от предыдущих
+данных (функция <code>clear_tasks()</code>), чтобы результаты не накапливались. Время выполнения каждого подхода замеряется
+с помощью <code>time.perf_counter()</code> и выводится в консоль.</p>
+<hr />
+<h3 id="_12">Результаты выполнения</h3>
+<p><strong>Threading (8 потоков):</strong> время выполнения составило <strong>27.72 секунды</strong></p>
+<p><strong>Multiprocessing (8 процессов):</strong> время выполнения составило <strong>42.08 секунды</strong></p>
+<p><strong>Asyncio (8 задач):</strong> время выполнения составило <strong>7.62 секунды</strong></p>
+<hr />
+<h3 id="_13">Сводная таблица результатов</h3>
 <table>
 <thead>
 <tr>
 <th>Подход</th>
+<th>Количество воркеров</th>
 <th>Время (сек)</th>
-<th>Относительная скорость</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>Asyncio</td>
-<td>1.41</td>
-<td>1.0x (база)</td>
+<td>8 задач</td>
+<td><strong>7.62</strong></td>
 </tr>
 <tr>
 <td>Threading</td>
-<td>7.67</td>
-<td>в 5.4 раза медленнее</td>
+<td>8 потоков</td>
+<td>27.72</td>
 </tr>
 <tr>
 <td>Multiprocessing</td>
-<td>11.81</td>
-<td>в 8.4 раза медленнее</td>
-</tr>
-</tbody>
-</table>
-<h3 id="_14">Визуализация</h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>Asyncio         ████████ 1.41 сек
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>Threading       ████████████████████████████████████████ 7.67 сек
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>Multiprocessing ████████████████████████████████████████████████████████ 11.81 сек
-</span></code></pre></div>
-<hr />
-<h2 id="4">4. Анализ результатов</h2>
-<h3 id="41-asyncio">4.1. Почему Asyncio самый быстрый?</h3>
-<p>Асинхронный подход показал наилучший результат (1.41 сек) по нескольким причинам:</p>
-<ul>
-<li>Отсутствие накладных расходов — не создаются потоки или процессы</li>
-<li>Неблокирующие операции — при ожидании ответа от сервера цикл событий переключается на другие задачи</li>
-<li>Единая TCP-сессия — переиспользование соединений (Keep-Alive)</li>
-</ul>
-<h3 id="42-threading">4.2. Почему Threading медленнее?</h3>
-<p>Многопоточный подход занял второе место (7.67 сек):</p>
-<ul>
-<li>При I/O-операциях потоки освобождают GIL, что позволяет им работать конкурентно</li>
-<li>Однако создание 8 потоков даёт накладные расходы на переключение контекста</li>
-<li>Каждый поток требует выделения стека и управления со стороны ОС</li>
-</ul>
-<h3 id="43-multiprocessing">4.3. Почему Multiprocessing самый медленный?</h3>
-<p>Многопроцессный подход оказался самым медленным (11.81 сек):</p>
-<ul>
-<li>Создание процессов требует значительно больше ресурсов, чем потоков</li>
-<li>Каждый процесс инициализирует собственный интерпретатор Python</li>
-<li>Отсутствие общей памяти между процессами</li>
-<li>Для I/O-задач преимущество параллелизма на разных ядрах не даёт выигрыша</li>
-</ul>
-<h3 id="44-io-bound">4.4. Сравнительная таблица для I/O-bound задач</h3>
-<table>
-<thead>
-<tr>
-<th>Характеристика</th>
-<th>Threading</th>
-<th>Multiprocessing</th>
-<th>Asyncio</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Время выполнения</td>
-<td>7.67 сек</td>
-<td>11.81 сек</td>
-<td>1.41 сек</td>
-</tr>
-<tr>
-<td>Накладные расходы</td>
-<td>средние</td>
-<td>высокие</td>
-<td>низкие</td>
-</tr>
-<tr>
-<td>Сложность кода</td>
-<td>низкая</td>
-<td>средняя</td>
-<td>средняя</td>
-</tr>
-<tr>
-<td>Рекомендация</td>
-<td>допустимо</td>
-<td>не рекомендуется</td>
-<td>рекомендуется</td>
+<td>8 процессов</td>
+<td>42.08</td>
 </tr>
 </tbody>
 </table>
 <hr />
-<h2 id="5_1">5. Заключение</h2>
-<p>В ходе выполнения второй задачи лабораторной работы были получены следующие выводы:</p>
-<ol>
-<li>
-<p>Для I/O-bound задач (сетевые запросы) асинхронный подход является наиболее эффективным. Asyncio показал время
-   выполнения 1.41 сек, что в 5–8 раз быстрее альтернатив.</p>
-</li>
-<li>
-<p>Threading допустим, но уступает asyncio. Создание потоков даёт накладные расходы, но для I/O-задач он всё ещё
-   эффективнее multiprocessing.</p>
-</li>
-<li>
-<p>Multiprocessing не подходит для I/O-задач. Создание процессов требует слишком много ресурсов, а выигрыш от
-   параллелизма не проявляется.</p>
-</li>
-<li>
-<p>Выбор подхода зависит от типа задачи:</p>
-<ul>
-<li>I/O-bound (сеть, диск, БД) → asyncio (или threading)</li>
-<li>CPU-bound (вычисления) → multiprocessing</li>
-</ul>
-</li>
-</ol>
+<h3 id="_14">Анализ результатов</h3>
+<p><strong>Почему Asyncio самый быстрый (7.62 сек)?</strong></p>
+<p>Асинхронный подход не создаёт потоки или процессы, поэтому нет накладных расходов на их создание и переключение
+контекста. Все запросы отправляются почти одновременно, а цикл событий эффективно переключается между задачами
+во время ожидания ответа от сервера.</p>
+<p><strong>Почему Threading медленнее (27.72 сек)?</strong></p>
+<p>Потоки имеют накладные расходы на создание и переключение контекста. Хотя при I/O-операциях потоки освобождают GIL,
+переключение между потоками всё равно требует времени от операционной системы.</p>
+<p><strong>Почему Multiprocessing самый медленный (42.08 сек)?</strong></p>
+<p>Создание процессов требует значительно больше ресурсов, чем создание потоков. Каждый процесс инициализирует
+собственный интерпретатор Python. Для I/O-задач, где процессор не нагружен, эти накладные расходы не окупаются.</p>
+<hr />
+<h3 id="1">Демонстрация сохранения в базу данных ЛР1</h3>
+<p>После выполнения парсинга данные сохранились в таблицу <code>tasks</code> базы данных тайм-менеджера. Через Swagger-документацию
+(http://localhost:8000/docs) можно выполнить запрос <code>GET /tasks/?project_id=3</code> и увидеть все созданные задачи
+в проекте «Книги к прочтению».</p>
+<p>Каждая задача содержит название книги, автора, ссылку на источник, приоритет и статус "pending" (ожидает выполнения).</p>
+<hr />
+<h3 id="_15">Вывод</h3>
+<p>В ходе выполнения второй задачи лабораторной работы было установлено, что для I/O-задач (парсинг веб-страниц)
+наиболее эффективным подходом является <strong>asyncio</strong> (7.62 секунды). Он не создаёт лишних накладных расходов и
+эффективно управляет неблокирующими операциями ввода-вывода.</p>
+<p>Подход <strong>threading</strong> показал средний результат (27.72 секунды) — он допустим для I/O-задач, но уступает asyncio.
+Подход <strong>multiprocessing</strong> оказался самым медленным (42.08 секунды) и не рекомендуется для задач, связанных
+с сетевыми запросами.</p>
+<p>Данные успешно сохранились в базу данных лабораторной работы №1, что подтверждается через API тайм-менеджера.</p>
 
 
 
