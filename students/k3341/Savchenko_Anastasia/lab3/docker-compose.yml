@@ -1,0 +1,55 @@
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: timemanager_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  parser:
+    build: ./parser
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./parser:/app
+    command: uvicorn parser_api:app --host 0.0.0.0 --port 8001 --reload
+
+  app:
+    build: .
+    depends_on:
+      - db
+      - parser
+      - redis
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/timemanager_db
+      JWT_SECRET: your-super-secret-key-change-me
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRE_MINUTES: 60
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  celery_worker:
+    build: .
+    depends_on:
+      - redis
+      - parser
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/timemanager_db
+    volumes:
+      - .:/app
+    command: celery -A celery_app worker --loglevel=info
+
+volumes:
+  postgres_data:

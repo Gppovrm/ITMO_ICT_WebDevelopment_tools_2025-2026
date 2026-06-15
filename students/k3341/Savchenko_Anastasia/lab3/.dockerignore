@@ -1,0 +1,9 @@
+__pycache__
+*.pyc
+.venv
+venv
+.git
+.gitignore
+.env
+migrations/versions/*.py
+!migrations/versions/__init__.py
